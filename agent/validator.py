@@ -27,7 +27,44 @@ fails is rejected, re-planned up to your bound, then escalated. Never executed.
 """
 
 from __future__ import annotations
+from agent.loop import load_bounds
 
 
 def validate(plan: dict) -> dict:
-    raise NotImplementedError("Assignment 2 Part B: the four checks")
+    failures = []
+
+    steps = plan.get("steps", [])
+    allowed_tools = plan.get("meta", {}).get("tools", [])
+    max_steps = load_bounds().max_steps
+
+    # Check the plan must have 1 to max_steps steps
+    if not 1 <= len(steps) <= max_steps:
+        failures.append({"step": None, "check": 4})
+
+    earlier_ids = set()
+
+    for step in steps:
+        step_id = step["id"]
+        tool = step.get("tool")
+
+        # Check the tool must be in the plan's tool list
+        if tool and tool not in allowed_tools:
+            failures.append({"step": step_id, "check": 1})
+
+        # Check dependencies must refer to earlier steps
+        if any(
+            dep not in earlier_ids
+            for dep in step.get("depends_on", [])
+        ):
+            failures.append({"step": step_id, "check": 2})
+
+        # Check each step needs a tool and expected result
+        if not tool or not step.get("expected_result"):
+            failures.append({"step": step_id, "check": 3})
+
+        earlier_ids.add(step_id)
+
+    return {
+        "valid": len(failures) == 0,
+        "failures": failures,
+    }

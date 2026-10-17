@@ -5,3 +5,13 @@
 __pycache__/
 *.pyc
 .DS_Store
+.venv/
+.venv-win/
+__pycache__/
+*.pyc
+.env
+.env.*
+reports/*.bak
+reports/LAB_02_backup_*.md
+
+*.bak

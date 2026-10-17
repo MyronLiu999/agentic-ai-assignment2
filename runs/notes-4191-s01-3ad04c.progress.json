@@ -1,0 +1,13 @@
+{
+  "about": "Steps executed and repository paths returned so far (not a to-do list)",
+  "steps_done": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "paths": [
+    "src/ingest/dedupe.ts",
+    "src/ingest/dedupe.ts"
+  ]
+}

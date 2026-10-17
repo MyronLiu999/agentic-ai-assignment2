@@ -40,10 +40,88 @@ Keep your prompts in prompts/.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+from harness.formats import LABELS, normalize_path, parse_triage_comment
+from harness.trace import read_trace
+
+
+CRITIQUE_TOOL = {
+    "name": "submit_critique",
+    "description": "Accept the triage draft or request a revision with a reason.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "decision": {"type": "string", "enum": ["accept", "revise"]},
+            "reason": {"type": ["string", "null"]},
+        },
+        "required": ["decision", "reason"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
 
 def verify(draft: str, ctx) -> dict:
-    raise NotImplementedError("Assignment 2 Part D: the external checks")
+    """Run four independent external checks, without consulting the answer key."""
+    reasons = []
+    label, path = parse_triage_comment(draft)
+    parsed = label in LABELS and path is not None
+    if not parsed:
+        reasons.append("parse: missing or unknown label/file")
+
+    # A `file: none` answer has no physical path to check or require in the trace.
+    if path is not None and path != "none":
+        repo = (Path(ctx.root) / "fixtures" / "repo").resolve()
+        target = (repo / path).resolve()
+        if not target.is_relative_to(repo) or not target.is_file():
+            reasons.append("exists: the named file is not in the repository")
+
+        trace_lines = read_trace(ctx.trace.path)
+        seen = {
+            normalize_path(str(p))
+            for line in trace_lines
+            if line.get("type") == "tool_call"
+            for p in (line.get("paths") or [])
+        }
+        if path not in seen:
+            reasons.append("seen: this run did not search for or read the named file")
+
+    if parsed and ((label == "question") != (path == "none")):
+        reasons.append("agreement: question requires none; other labels require a file")
+
+    return {"passed": not reasons, "reasons": reasons}
 
 
-def self_critique(client, draft: str, evidence: dict, trace=None) -> dict:
-    raise NotImplementedError("Assignment 2 Part D: the self critique")
+def self_critique(client, draft: str, evidence: dict, trace=None, *, step: int = 0) -> dict:
+    """Ask the model for an accept/revise decision based on this run's evidence."""
+    prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "self_critique.md"
+    system = prompt_path.read_text(encoding="utf-8")
+    message = (
+        "Review this triage draft against the available evidence.\n"
+        f"Draft:\n{draft}\n\n"
+        f"Evidence:\n{json.dumps(evidence, ensure_ascii=False, default=str)}"
+    )
+    response = client.create(
+        system=system,
+        messages=[{"role": "user", "content": message}],
+        tools=[CRITIQUE_TOOL],
+    )
+    if trace is not None:
+        trace.model_call(step, response, purpose="critique")
+
+    for call in response.tool_calls:
+        if call.name == "submit_critique":
+            decision = call.input.get("decision")
+            reason = call.input.get("reason")
+            if decision in ("accept", "revise"):
+                return {"decision": decision, "reason": None if decision == "accept" else (reason or "Revise draft")}
+
+    # If a provider replies in prose, accept a small set of unambiguous answers.
+    text = response.text.strip()
+    if text.lower() in ("accept", "yes"):
+        return {"decision": "accept", "reason": None}
+    if text.lower().startswith("revise"):
+        return {"decision": "revise", "reason": text[len("revise"):].lstrip(": ") or "Revise draft"}
+    return {"decision": "revise", "reason": "No valid critique decision returned"}
